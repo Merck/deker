@@ -1,0 +1,7 @@
+Third-party libraries used by deker listed below, with their associated licenses.
+
+boost (www.boost.org): Boost license (www.boost.org/users/license.html)
+eigen (eigen.tuxfamily.org/): MPL2 (www.mozilla.org/en-US/MPL/2.0/)
+googletest (google.github.io/googletest/): BSD 3-Clause (www.opensource.org/licenses/BSD-3-Clause)
+limbo (www.resibots.eu/limbo): CeCILL-C (cecill.info/licences/Licence_CeCILL-C_V1-en.html)
+nlopt (nlopt.readthedocs.io): LGPL (www.opensource.org/licenses/LGPL-2.1)
