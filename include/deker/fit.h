@@ -45,9 +45,6 @@ namespace deker{
       double null_BIC;
       //
     private:
-      limbo::opt::NLOptNoGrad<PF_Params,nlopt::LN_BOBYQA> limbo_nograd_solver;
-      limbo::opt::NLOptNoGrad<PF_Params,nlopt::GN_DIRECT_L> limbo_global_nograd_solver;
-      limbo::opt::NLOptGrad<FS_Params> limbo_lbfgs_solver;
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
       struct v_opt_prob{
@@ -224,6 +221,7 @@ namespace deker{
         //find best sigma given v
         sigma_opt_prob sigma_opt_tmp(min_sigma,max_sigma,v,feature_index,this);
         Eigen::VectorXd sigma_init = Eigen::VectorXd::Constant(1,sigma_opt_tmp.convert_to_bounded((max_sigma+min_sigma)/2.0));
+        limbo::opt::NLOptNoGrad<PF_Params,nlopt::LN_BOBYQA> limbo_nograd_solver;
         Eigen::VectorXd sigma_local_solution = limbo_nograd_solver(sigma_opt_tmp,sigma_init,true);
         return sigma_opt_tmp.convert_from_bounded(sigma_local_solution(0));
       }
@@ -236,6 +234,7 @@ namespace deker{
       {
         //find best v given sigma
         v_opt_prob v_opt_tmp(lambda_regularization,sigma_kernel_width,v,feature_index,this);
+        limbo::opt::NLOptGrad<FS_Params> limbo_lbfgs_solver;
         Eigen::VectorXd v_new = limbo_lbfgs_solver(v_opt_tmp,v,false);
         return v_new.array().abs();
       }

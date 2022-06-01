@@ -164,9 +164,8 @@ namespace deker{
                         outfile<<response_labels.get_response()(i)<<",";//<<
                         outfile<<response_labels.get_response()(response_labels.get_threshold_inds(false).at(j))<<",";//<<
                         outfile<<response_labels.get_y_labels(false)(i,j-1)<<",";//<<
-                        //outfile<<raw_predicted((response_labels.get_threshold_inds(false).at(j)-1)*nrow+i)<<",";//<<
-                        outfile<<"TODOFIX"<<",";
-                        outfile<<platt_probs((j-1)*nrow+i)<<"\n";
+                        outfile<<raw_predicted((response_labels.get_threshold_inds(false).at(j)-1)*nrow+i)<<",";//<<
+                        outfile<<platt_probs((response_labels.get_threshold_inds(false).at(j)-1)*nrow+i)<<"\n";
                     }
                 }
             }

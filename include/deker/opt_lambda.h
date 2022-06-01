@@ -145,73 +145,73 @@ namespace deker{
           }
           /////////////////////////
         }else if(!fill_complete){
-          //do a fill iteration
-          double max_dist = 0;
-          if(fill_iter==0){
-            new_sol.lambda_regularization = 0;
-            max_dist = 1;
-          }else{
-            ////////////////////////
-            std::vector<double> sort_lambda = sampled_lambda;
-            std::sort(sort_lambda.begin(),sort_lambda.end());
-            sort_lambda.push_back(lambda_max);
-            double max_dist_midpt=0;
-            for(unsigned i=1; i<sort_lambda.size();i++){
-              double tmp_diff=(sort_lambda.at(i)-sort_lambda.at(i-1))/lambda_max;
-              if(tmp_diff>max_dist){
-                max_dist=tmp_diff;
-                max_dist_midpt=(sort_lambda.at(i)+sort_lambda.at(i-1))/2;
-              }
+            //do a fill iteration
+            double max_dist = 0;
+            if(fill_iter==0){
+                new_sol.lambda_regularization = 0;
+                max_dist = 1;
+            }else{
+                ////////////////////////
+                std::vector<double> sort_lambda = sampled_lambda;
+                std::sort(sort_lambda.begin(),sort_lambda.end());
+                sort_lambda.push_back(lambda_max);
+                double max_dist_midpt=0;
+                for(unsigned i=1; i<sort_lambda.size();i++){
+                    double tmp_diff=(sort_lambda.at(i)-sort_lambda.at(i-1))/lambda_max;
+                    if(tmp_diff>max_dist){
+                        max_dist=tmp_diff;
+                        max_dist_midpt=(sort_lambda.at(i)+sort_lambda.at(i-1))/2;
+                    }
+                }
+                new_sol.lambda_regularization = max_dist_midpt;
+                
+                ////////////////////////
+                // double max_good_sample_lambda = *max_element(sampled_lambda.begin(), sampled_lambda.end());
+                // max_dist = (lambda_max - max_good_sample_lambda)/lambda_max;
+                // double max_dist_mid_pt = (lambda_max+max_good_sample_lambda)/2;
+                // //
+                // if(sampled_lambda.size()>1){
+                //   for(unsigned i = 0; i<sampled_lambda.size();i++){
+                //     bool init = true;
+                //     double min_dist; 
+                //     double min_dist_lambda;
+                //     for(unsigned j = 0; j<sampled_lambda.size();j++){
+                //       if(i!=j){
+                //         double dist = std::abs(sampled_lambda.at(i)-sampled_lambda.at(j))/lambda_max;
+                //         if(init||dist<min_dist){
+                //           init = false;
+                //           min_dist = dist;
+                //           min_dist_lambda = sampled_lambda.at(j);
+                //         }
+                //       }
+                //     }
+                //     if(min_dist>max_dist){
+                //       max_dist = min_dist;
+                //       max_dist_mid_pt = (sampled_lambda.at(i)+min_dist_lambda)/2;
+                //     }
+                //   }
+                // }
+                // new_sol.lambda_regularization = max_dist_mid_pt;
             }
-            new_sol.lambda_regularization = max_dist_midpt;
-            
-            ////////////////////////
-            // double max_good_sample_lambda = *max_element(sampled_lambda.begin(), sampled_lambda.end());
-            // max_dist = (lambda_max - max_good_sample_lambda)/lambda_max;
-            // double max_dist_mid_pt = (lambda_max+max_good_sample_lambda)/2;
-            // //
-            // if(sampled_lambda.size()>1){
-            //   for(unsigned i = 0; i<sampled_lambda.size();i++){
-            //     bool init = true;
-            //     double min_dist; 
-            //     double min_dist_lambda;
-            //     for(unsigned j = 0; j<sampled_lambda.size();j++){
-            //       if(i!=j){
-            //         double dist = std::abs(sampled_lambda.at(i)-sampled_lambda.at(j))/lambda_max;
-            //         if(init||dist<min_dist){
-            //           init = false;
-            //           min_dist = dist;
-            //           min_dist_lambda = sampled_lambda.at(j);
-            //         }
-            //       }
-            //     }
-            //     if(min_dist>max_dist){
-            //       max_dist = min_dist;
-            //       max_dist_mid_pt = (sampled_lambda.at(i)+min_dist_lambda)/2;
-            //     }
-            //   }
-            // }
-            // new_sol.lambda_regularization = max_dist_mid_pt;
-          }
-          //Run the model at the selected lambda
-          (opt_class.*ClassFunc)(new_sol.lambda_regularization,new_sol);
-          sample_sols.push_back(new_sol);
-          std::cerr<<"(fi)  lambda "<<new_sol.lambda_regularization<<" sigma "<<new_sol.sigma_kernel_width<<" BIC "<<new_sol.BIC<<" "<<new_sol.return_status<<"\n";
-          //Output cases
-          if(new_sol.return_status == 2){
-            new_sol.BIC = std::numeric_limits<double>::max();
-          }else{
-            if(sampled_lambda.size()==0 || sample_sols.at(which_best).return_status==-1 || new_sol.BIC < sample_sols.at(which_best).BIC){
-              which_best = sample_sols.size()-1;
+            //Run the model at the selected lambda
+            (opt_class.*ClassFunc)(new_sol.lambda_regularization,new_sol);
+            sample_sols.push_back(new_sol);
+            std::cerr<<"(fi)  lambda "<<new_sol.lambda_regularization<<" sigma "<<new_sol.sigma_kernel_width<<" BIC "<<new_sol.BIC<<" "<<new_sol.return_status<<"\n";
+            //Output cases
+            if(new_sol.return_status == 2){
+                new_sol.BIC = std::numeric_limits<double>::max();
+            }else{
+                if(sampled_lambda.size()==0 || sample_sols.at(which_best).return_status==-1 || new_sol.BIC < sample_sols.at(which_best).BIC){
+                    which_best = sample_sols.size()-1;
+                }
             }
-          }
-          sampled_lambda.push_back(new_sol.lambda_regularization);
-          sampled_BIC.push_back(new_sol.BIC);
-          fill_iter++;
-          if(max_dist<=fill_mindist||fill_iter>=fill_maxiter){
-            std::cerr<<max_dist<<"<="<<fill_mindist<<" or "<<fill_iter<<">="<<fill_maxiter<<"\n";
-            fill_complete=true;
-          }
+            sampled_lambda.push_back(new_sol.lambda_regularization);
+            sampled_BIC.push_back(new_sol.BIC);
+            fill_iter++;
+            if(max_dist<=fill_mindist||fill_iter>=fill_maxiter){
+                std::cerr<<max_dist<<"<="<<fill_mindist<<" or "<<fill_iter<<">="<<fill_maxiter<<"\n";
+                fill_complete=true;
+            }
         }else if(!bo_complete){
           /////////////////////////
           //do a bayesian optimization iteration
