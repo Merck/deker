@@ -31,9 +31,17 @@
 #include "test/misc_io_test.h"
 #include "test/control_base_test.h"
 #include "test/fit_output_test.h"
+#include "test/digest_test.h"
 //Fitting based function tests
+#include "test/fit_math_elbow_test.h"
+#include "test/fit_split_data_test.h"
+#include "test/fit_response_labels_test.h"
+#include "test/fit_opt_lambda_test.h"
 #include "test/fit_math_small_test.h"
 #include "test/fit_math_med_test.h"
+#include "test/lightgbm_test.h"
+#include "test/holdout_fit_small_test.h"
+// #include "test/fit_predictions_test.h"
 ///
 int main(int argc, char **argv){
   ::testing::InitGoogleTest(&argc, argv);

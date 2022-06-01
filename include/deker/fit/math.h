@@ -52,7 +52,7 @@ namespace deker{
           for(unsigned j = i+1; j<kernel_matrix.cols();j++){
             for(unsigned k = 0; k<feature_index.size(); k++){
               //distance calculation for kernel function
-              kernel_matrix(i,j) += pow((input_data.predictors(input_data.response_sort_index.at(i),feature_index.at(k))-input_data.predictors(input_data.response_sort_index.at(j),feature_index.at(k)))*v(k)*v(k),2);
+              kernel_matrix(i,j) += pow((input_data.predictors(i,feature_index.at(k))-input_data.predictors(j,feature_index.at(k)))*v(k)*v(k),2);
             }
             kernel_matrix(i,j) = -kernel_matrix(i,j)*kernel_multiplier;
             kernel_matrix(j,i) = kernel_matrix(i,j);
@@ -64,16 +64,17 @@ namespace deker{
       /////////////////////////////////////////////////////////////////////////////////////////////////
       Eigen::MatrixXd calc_weighting_piece(const unsigned n,
                                            const Response_Labels& response_labels,
+                                           const bool& use_lab_fix,
                                            const Eigen::Ref<const Eigen::MatrixXd> kernel_matrix,
                                            const bool& label_type)
       {
         Eigen::MatrixXd wt_mat;
         if(label_type){
           //take only kernel_matrix where y_labels == 1
-          wt_mat = kernel_matrix.bottomRows(response_labels.y_labels.rows()-response_labels.threshold_inds.at(n+1));
+          wt_mat = kernel_matrix.bottomRows(response_labels.get_y_labels(use_lab_fix).rows()-response_labels.get_threshold_inds(use_lab_fix).at(n+1));
         }else{
           //take only kernel_matrix where y_labels == 0
-          wt_mat = kernel_matrix.topRows(response_labels.threshold_inds.at(n+1));
+          wt_mat = kernel_matrix.topRows(response_labels.get_threshold_inds(use_lab_fix).at(n+1));
         }
         wt_mat.rowwise() -= wt_mat.colwise().maxCoeff();
         wt_mat = wt_mat.array().exp();
@@ -92,34 +93,29 @@ namespace deker{
       /////////////////////////////////////////////////////////////////////////////////////////////////
       Eigen::MatrixXd calc_weighting_matrix(const unsigned n, 
                                             const Response_Labels& response_labels,
+                                            const bool& use_lab_fix,
                                             const Eigen::Ref<const Eigen::MatrixXd> kernel_matrix)
       {
-        Eigen::MatrixXd split_false = calc_weighting_piece(n,response_labels,kernel_matrix,false);
-        Eigen::MatrixXd split_true = calc_weighting_piece(n,response_labels,kernel_matrix,true);
+        Eigen::MatrixXd split_false = calc_weighting_piece(n,response_labels,use_lab_fix,kernel_matrix,false);
+        Eigen::MatrixXd split_true = calc_weighting_piece(n,response_labels,use_lab_fix,kernel_matrix,true);
         Eigen::MatrixXd to_return(split_false.rows()+split_true.rows(),split_false.cols());
         to_return << split_false,split_true;
         return to_return;
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
-      std::tuple<Eigen::MatrixXd,Eigen::VectorXd,Eigen::VectorXd> calc_z_cache(const Split_Data& input_data,
-                                                                               const Response_Labels& response_labels,
-                                                                               const double& sigma_kernel_width,
-                                                                               const Eigen::Ref<const Eigen::VectorXd> v,
-                                                                               const std::vector<unsigned>& feature_index,
-                                                                               const bool& opt_w_prep = false,
-                                                                               const bool& exclude_diag = true)
+      std::tuple<Eigen::MatrixXd,Eigen::VectorXd> calc_z_cache(const Split_Data& input_data,
+                                                               const Response_Labels& response_labels,
+                                                               const double& sigma_kernel_width,
+                                                               const Eigen::Ref<const Eigen::VectorXd> v,
+                                                               const std::vector<unsigned>& feature_index,
+                                                               const bool& exclude_diag = true,
+                                                               const bool& opt_w_prep = false)
       {
         Eigen::MatrixXd kernel_matrix = calc_kernel_matrix(input_data,
                                                            sigma_kernel_width,
                                                            v,
                                                            feature_index);
-        
-        Eigen::VectorXd tmp_w_transform;
-        Eigen::MatrixXd tmp_z_cache = Eigen::MatrixXd::Zero(feature_index.size(),response_labels.y_labels.size());
-        Eigen::MatrixXd tmp_z_abs = Eigen::MatrixXd::Zero(feature_index.size(),response_labels.y_labels.size());
-        Eigen::VectorXd tmp_z_cache_col_multiple;
-        tmp_z_cache_col_multiple = Eigen::VectorXd::Constant(tmp_z_cache.cols(),1);
         //
         if(exclude_diag){
           //set diagonals to (sortof) infinite distance to remove them from calculation
@@ -127,71 +123,105 @@ namespace deker{
         }
         //
         std::vector<Eigen::MatrixXd> threshold_diff_mat;
-        for(unsigned n = 0; n<response_labels.threshold_inds.size()-1; n++){
-          threshold_diff_mat.push_back(calc_weighting_matrix(n,response_labels,kernel_matrix));
+        for(unsigned n = 0; n<response_labels.get_threshold_inds(!opt_w_prep).size()-1; n++){
+          threshold_diff_mat.push_back(calc_weighting_matrix(n,response_labels,!opt_w_prep,kernel_matrix));
         }
+        //
+        Eigen::MatrixXd tmp_z_cache = Eigen::MatrixXd::Zero(feature_index.size(),response_labels.get_y_labels(!opt_w_prep).size());
+        Eigen::VectorXd tmp_z_cache_col_multiple;
+        tmp_z_cache_col_multiple = Eigen::VectorXd::Constant(tmp_z_cache.cols(),1);
         //
         for(unsigned feature_i = 0; feature_i<feature_index.size();feature_i++){
           unsigned z_cache_col_index = 0; //the next column to start filling
-          //TODO: because of this, may be worth building a sorted predictors set beforehand
-          Eigen::VectorXd sorted_predictors(input_data.predictors.rows());
-          for(unsigned sample_i = 0;sample_i<input_data.response_sort_index.size();sample_i++){
-            sorted_predictors(sample_i) = input_data.predictors(input_data.response_sort_index.at(sample_i),feature_index.at(feature_i));
-          }
-          Eigen::MatrixXd feature_diff_mat = sorted_predictors.replicate(1,sorted_predictors.size());
-          feature_diff_mat.rowwise() -= sorted_predictors.transpose();
+          Eigen::MatrixXd feature_diff_mat = input_data.predictors.col(feature_index.at(feature_i)).replicate(1,input_data.predictors.rows());
+          feature_diff_mat.rowwise() -= input_data.predictors.col(feature_index.at(feature_i)).transpose();
           feature_diff_mat = feature_diff_mat.array().abs();
-          for(unsigned n = 0; n<response_labels.threshold_inds.size()-1; n++){
+          for(unsigned n = 0; n<response_labels.get_threshold_inds(!opt_w_prep).size()-1; n++){
             Eigen::MatrixXd all_diff_mat = feature_diff_mat.array()*threshold_diff_mat.at(n).array();
             tmp_z_cache.block(feature_i,z_cache_col_index,1,threshold_diff_mat.at(n).cols()) = all_diff_mat.colwise().sum();
-            tmp_z_abs.block(feature_i,z_cache_col_index,1,threshold_diff_mat.at(n).cols()) = all_diff_mat.array().abs().colwise().sum();
             z_cache_col_index += threshold_diff_mat.at(n).cols();
           }
         }
-        //divide z_cache by abs when abs >0, avoiding NaNs (z_cache(i,j)==0 if tmp_z_abs(i,j)==0)
         if(opt_w_prep){
           //multiply z_cache columns by their label as -1/1 (so positive is correct classification, and negative is missclassification)
           //once this is done, ordering of columns does not need to be preserved
-          Eigen::Map<const Eigen::ArrayXd> lab_array(response_labels.y_labels.data(),response_labels.y_labels.size());
+          Eigen::Map<const Eigen::ArrayXd> lab_array(response_labels.get_y_labels(!opt_w_prep).data(),
+                                                     response_labels.get_y_labels(!opt_w_prep).size());
           tmp_z_cache.array().rowwise() *= (lab_array.transpose()*2-1);
           //walk backwards through columns and consolidate columns with identical multiples
           unsigned last_column = tmp_z_cache.cols()-1;
           for(int i = tmp_z_cache.cols()-1; i>=0; i--){
-            int which_sample = i%kernel_matrix.cols();
-            int which_threshold = 1+i/((int)kernel_matrix.cols());
+            int which_sample = i%input_data.response.size();
+            int which_threshold = 1+i/((int)input_data.response.size());
             //check if the column sample is the value the column y_label was thresholded on
             //if so, remove it - for w opt we're doing LOOCV
             //also drop if the column is all 0's
-            if(((which_sample>=response_labels.threshold_inds.at(which_threshold))&&
-               (which_sample<(response_labels.threshold_inds.at(which_threshold)+response_labels.threshold_mult.at(which_threshold)))&&
-               (response_labels.threshold_mult.at(which_threshold)==1))||
-               tmp_z_abs.col(i).sum()==0){
+            if(((which_sample>=response_labels.get_threshold_inds(!opt_w_prep).at(which_threshold))&&
+               (which_sample<(response_labels.get_threshold_inds(!opt_w_prep).at(which_threshold)+response_labels.get_threshold_mult(!opt_w_prep).at(which_threshold)))&&
+               (response_labels.get_threshold_mult(!opt_w_prep).at(which_threshold)==1))||(
+               tmp_z_cache.col(i).minCoeff()==0&&tmp_z_cache.col(i).maxCoeff()==0)){
               //drops column by replacing it with the last good column
               //will be removed with conservativeResize once all columns have been sorted to the end
               tmp_z_cache.col(i) = tmp_z_cache.col(last_column);
-              tmp_z_abs.col(i) = tmp_z_abs.col(last_column);
               tmp_z_cache_col_multiple(i) = tmp_z_cache_col_multiple(last_column);
               last_column--;
-            }else if(i>=kernel_matrix.cols()){
+            }else if(i>=input_data.response.size()){
               //check of column is unique to next column with the same sample i
               //remove and add mult if not
-              double maximum_difference_to_next_threshold = (tmp_z_cache.col(i)-tmp_z_cache.col(i-kernel_matrix.cols())).maxCoeff();
+              double maximum_difference_to_next_threshold = (tmp_z_cache.col(i)-tmp_z_cache.col(i-input_data.response.size())).maxCoeff();
               if(maximum_difference_to_next_threshold<1e-3){
-                tmp_z_cache_col_multiple(i-kernel_matrix.cols())+=tmp_z_cache_col_multiple(i);
+                tmp_z_cache_col_multiple(i-input_data.response.size())+=tmp_z_cache_col_multiple(i);
                 tmp_z_cache.col(i) = tmp_z_cache.col(last_column);
-                tmp_z_abs.col(i) = tmp_z_abs.col(last_column);
                 tmp_z_cache_col_multiple(i) = tmp_z_cache_col_multiple(last_column);
                 last_column--;
               }
             }
           }
           tmp_z_cache.conservativeResize(tmp_z_cache.rows(),last_column+1);
-          tmp_z_abs.conservativeResize(tmp_z_abs.rows(),last_column+1);
           tmp_z_cache_col_multiple.conservativeResize(last_column+1);
-          tmp_w_transform = Eigen::VectorXd::Constant(tmp_z_cache.rows(),1.0);
         }
-        return std::make_tuple(tmp_z_cache,tmp_w_transform,tmp_z_cache_col_multiple);
+        return std::make_tuple(tmp_z_cache,tmp_z_cache_col_multiple);
       }
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      Eigen::MatrixXd calc_z_cache_holdout(const Split_Data& input_data,
+                                           const Response_Labels& response_labels,
+                                           const double& sigma_kernel_width,
+                                           const Eigen::Ref<const Eigen::VectorXd> v,
+                                           const std::vector<unsigned>& feature_index,
+                                           const Eigen::Ref<const Eigen::MatrixXd> test_predictors)
+      {
+        double kernel_multiplier = 1/(2*pow(exp(sigma_kernel_width),2));
+        //constuct kernel matrix
+        Eigen::MatrixXd kernel_matrix = Eigen::MatrixXd::Zero(input_data.response.size(),test_predictors.rows());
+        //entries equal kernel(i,j)
+        for(unsigned i = 0; i<kernel_matrix.rows();i++){
+          for(unsigned j = 0; j<test_predictors.rows();j++){
+            for(unsigned k = 0; k<feature_index.size(); k++){
+              //distance calculation for kernel function
+              kernel_matrix(i,j) += pow((input_data.predictors(i,feature_index.at(k))-test_predictors(j,feature_index.at(k)))*v(k)*v(k),2);
+            }
+            kernel_matrix(i,j) = -kernel_matrix(i,j)*kernel_multiplier;
+          } 
+        }
+        std::vector<Eigen::MatrixXd> threshold_diff_mat;
+        for(unsigned n = 0; n<response_labels.get_threshold_inds(false).size()-1; n++){
+          threshold_diff_mat.push_back(calc_weighting_matrix(n,response_labels,false,kernel_matrix));
+        }
+        Eigen::MatrixXd tmp_z_cache = Eigen::MatrixXd::Zero(feature_index.size(),threshold_diff_mat.size()*test_predictors.rows());
+        for(unsigned feature_i = 0; feature_i<feature_index.size();feature_i++){
+          unsigned z_cache_col_index = 0; //the next column to start filling
+          Eigen::MatrixXd feature_diff_mat = input_data.predictors.col(feature_index.at(feature_i)).replicate(1,test_predictors.rows());
+          feature_diff_mat.rowwise() -= test_predictors.col(feature_index.at(feature_i)).transpose();
+          feature_diff_mat = feature_diff_mat.array().abs();
+          for(unsigned n = 0; n<threshold_diff_mat.size(); n++){
+            Eigen::MatrixXd all_diff_mat = feature_diff_mat.array()*threshold_diff_mat.at(n).array();
+            tmp_z_cache.block(feature_i,z_cache_col_index,1,threshold_diff_mat.at(n).cols()) = all_diff_mat.colwise().sum();
+            z_cache_col_index += threshold_diff_mat.at(n).cols();
+          } 
+        }
+        return tmp_z_cache;
+      } 
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
       //z_cache_ptr.calculate_v_gradient(v,control.h_huber_los,control.hinge_max,lambda_regularization,fx,gradient);
@@ -285,18 +315,50 @@ namespace deker{
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
-      double calc_null_BIC(const Split_Data& input_data,
-                           const Response_Labels& response_labels)
+      double calc_null_BIC(const Response_Labels& response_labels)
       {
-        double y_lab_sum = response_labels.y_labels.sum();
-        double y_lab_mean = y_lab_sum/response_labels.y_labels.size();
-        double logli = std::log(y_lab_mean)*y_lab_sum+std::log(1.0-y_lab_mean)*(response_labels.y_labels.size()-y_lab_sum);
-        logli /= (double) response_labels.y_labels.cols();
+        int keep_y_cols = response_labels.get_y_labels(false).cols();
+        int keep_y_size = response_labels.get_y_labels(false).rows()*keep_y_cols;
+        double y_lab_sum = response_labels.get_y_labels(false).rightCols(keep_y_cols).sum();
+        double y_lab_mean = y_lab_sum/(keep_y_size);
+        double logli = std::log(y_lab_mean)*y_lab_sum+std::log(1.0-y_lab_mean)*(keep_y_size-y_lab_sum);
+        logli /= (double) keep_y_cols;
         
-        return log((double)input_data.response.size()) * 1.0/response_labels.y_labels.cols() - 2*logli;
+        return log((double)response_labels.get_y_labels(false).rows()) * 1.0/keep_y_cols - 2*logli;
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
+      double find_elbow(const Eigen::Ref<const Eigen::VectorXd> vals) 
+      {
+        std::vector<unsigned> val_sort = sort_indexes(vals);
+        if(vals.size()<=2){
+          throw std::invalid_argument("for deker::math::find_elbow, vals.size() must be > 2");
+        }
+        Eigen::MatrixXd val_mat(vals.size(),2);
+        //val_mat.col(1) = vals;
+        for(unsigned i = 0;i<val_mat.rows();i++){
+          val_mat(i,0) = (double) i;
+          val_mat(i,1) = vals(val_sort.at(i));
+        }
+        Eigen::RowVectorXd line_vec_n = val_mat.bottomRows(1)-val_mat.topRows(1);
+        line_vec_n.array() /= line_vec_n.norm();
+        val_mat = (val_mat.rowwise() - val_mat.row(0)).eval();
+        Eigen::VectorXd dot_product = (val_mat.array().rowwise() * line_vec_n.array()).rowwise().sum();
+        val_mat -= (dot_product * line_vec_n);
+        Eigen::VectorXd dist_to_line = val_mat.rowwise().squaredNorm();
+        unsigned max_val_index = 0;
+        double max_dist = 0;
+        double tolerance = 1e-8;
+        for(int i = dist_to_line.size()-2; i>=0; i--){
+          if(val_mat(i,0)>=0&&val_mat(i,1)<=0&&
+             dist_to_line(i)-max_dist>tolerance)
+          {
+            max_val_index = (unsigned) i;
+            max_dist = dist_to_line(i);
+          }
+        }
+        return vals(val_sort.at(max_val_index));
+      }
     }
   }
 }

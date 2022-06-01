@@ -75,14 +75,16 @@ fi
 ############################################################################
 ############################################################################
 dt_id=$(date '+%S%M%H%d%m%Y')
-n_responses=$(./deker -s $CONTROL_FILE)
-echo "Running feature selection for $n_responses features in $1"
+digest_file="deker.$dt_id/digest"
+edgelist_file="edge_out_$dt_id.csv"
+n_responses=$(./deker -s $CONTROL_FILE $digest_file)
+echo "Running feature selection for $n_responses features in $1; key $dt_id"
 #if verbose, set a log_file
 if [ "$VERBOSE" = true ]; then
   log_file="$dt_id.control_log"
 fi
 #make intermediate directories
-mkdir -p logs ind_out.$dt_id
+mkdir -p logs
 ############################################################################
 ############################################################################
 # Initial Parameter ID Submit Loop
@@ -101,7 +103,6 @@ done
 max_pending_jobs=2000
 check_pending_jobs=1000
 ####
-run_file_prefix="ind_out.$dt_id/feature_select.$dt_id"
 rm -f $dt_id.ind_out/*
 exit_while=false
 while [ "$exit_while" = false ]; do
@@ -128,8 +129,8 @@ while [ "$exit_while" = false ]; do
   	      echo "Checking feature $i" >> $log_file
   	      echo "Slot ${job_slots[$i]}" >> $log_file
   	    fi
-  		  #############################################################################
-  		  #check if saved job for given feature is found in qstat 
+  		#############################################################################
+  		#check if saved job for given feature is found in qstat 
   		  job_complete=true
   		  for j in $jobs_on_grid; do 
   			  if [ "${job_slots[$i]}" = "$j" ]
@@ -140,15 +141,14 @@ while [ "$exit_while" = false ]; do
   			  fi
   		  done
   	    #############################################################################
-  		  #submit next set of needed iterations if previous set is done
+  		#submit next set of needed iterations if previous set is done
   	    if [ "$job_complete" = true ]; then
-      	  ##########################################################################################
-          run_file=$run_file_prefix.$i.${n_iters[$i]}.run
-          if [ -f "$run_file" ]; then
-            skip_list[$i]=true
-            ./deker -e $run_file "edge_out_$dt_id.csv"
-            continue
-          fi
+      	##########################################################################################
+          check_status=$(./deker -c $i $digest_file $edgelist_file)
+          if [ $check_status -eq "1" ]; then
+	          skip_list[$i]=true
+	          continue
+	      fi
           ####
     	    set +e
     	    n_pending_jobs=$(qstat -s p | grep -c '^.*deker')
@@ -159,13 +159,12 @@ while [ "$exit_while" = false ]; do
 	        fi
           ####
       	  ((++n_iters[$i]))
-      	  #job_slots[$i]=$(qsub -terse -t 1-$parallel_iters ./deker_qsub.sh $control_dir $i "$run_file_prefix.$i.${n_iters[$i]}" | grep -o "^[[:digit:]]*")
-      	  job_slots[$i]=$(qsub -terse ./deker_qsub.sh $CONTROL_FILE $i "$run_file_prefix.$i.${n_iters[$i]}" | grep -o "^[[:digit:]]*")
+      	  job_slots[$i]=$(qsub -terse ./deker_qsub.sh $i $digest_file | grep -o "^[[:digit:]]*")
       	  if [ ! -z ${log_file+x} ]; then
       	    echo "Submitting $i" >> $log_file
       	  fi
       	  sleep .05 #throttle submission a little so we don't load in too many pending before they're able to start running
-    	    ##########################################################################################
+    	  ##########################################################################################
   	    fi #End if job complete
   	  fi #End if not skipped
     done #End feature loop

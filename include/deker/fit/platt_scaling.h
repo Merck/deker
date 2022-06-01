@@ -87,14 +87,10 @@ namespace deker{
         g1 = (deci*d1).sum();
         g2 = d1.sum();
       }
-      ///
+      //
       if(std::isnan(g1)||std::isnan(g2)){
-        throw std::logic_error("Get these nan's out of my face");
+        throw std::logic_error("nans entered platt scaling calculations");
       }
-      ///
-      //if(std::abs(g1)<1e-5 && std::abs(g2)<1e-5){
-      //  std::cerr<<"platt_scaling optimization didn't start: reached stopping criteria before optimization.\n";
-      //}
       double stepsize;
       for(unsigned it = 0; it<params.maxiter;it++){
         //Compute modified Newton directions
@@ -125,15 +121,9 @@ namespace deker{
           }
         }
         if(stepsize < params.minstep){
-          //std::cerr<<"platt_scaling line search failed during optimization.\n";
-          //std::cerr<<g1<<" "<<g2<<"\n";
-          ///
           if(std::isnan(g1)||std::isnan(g2)){
             throw std::logic_error("nans entered platt scaling calculations");
           }
-          ///
-          //std::cerr<<deci.transpose()<<"\n\n";
-          //std::cerr<<label.transpose()<<"\n\n";
           break;
         }
         //Update Gradient and Hessian (use H' = H + sigma I)

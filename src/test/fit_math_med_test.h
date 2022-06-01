@@ -25,6 +25,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #include <deker/fit.h>
+#include <deker/opt_lambda.h>
 #include <gtest/gtest.h>
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -33,30 +34,30 @@ protected:
   FitMathMedTest(){
     data_matrix.resize(25,6);
     data_matrix << 9,7,4,4,4,2,
-    8,7,5,5,3,1,
-    4,8,2,8,8,-4,
-    8,9,1,1,8,-1,
-    2,8,5,3,4,-6,
-    1,3,9,3,9,-2,
-    8,7,6,2,0,1,
-    1,5,6,6,1,-4,
-    5,6,1,7,3,-1,
-    0,7,7,3,2,-7,
-    2,4,0,6,0,-2,
-    6,0,8,0,7,6,
-    3,4,8,4,9,-1,
-    9,7,1,0,2,2,
-    3,7,2,4,3,-4,
-    7,3,8,9,9,4,
-    8,2,3,4,3,6,
-    6,2,7,1,2,4,
-    7,8,0,9,4,-1,
-    6,3,5,4,6,3,
-    3,1,0,2,9,2,
-    4,1,3,8,7,3,
-    3,8,0,3,4,-5,
-    3,5,3,7,8,-2,
-    9,0,4,4,2,9;
+                   8,7,5,5,3,1,
+                   4,8,2,8,8,-4,
+                   8,9,1,1,8,-1,
+                   2,8,5,3,4,-6,
+                   1,3,9,3,9,-2,
+                   8,7,6,2,0,1,
+                   1,5,6,6,1,-4,
+                   5,6,1,7,3,-1,
+                   0,7,7,3,2,-7,
+                   2,4,0,6,0,-2,
+                   6,0,8,0,7,6,
+                   3,4,8,4,9,-1,
+                   9,7,1,0,2,2,
+                   3,7,2,4,3,-4,
+                   7,3,8,9,9,4,
+                   8,2,3,4,3,6,
+                   6,2,7,1,2,4,
+                   7,8,0,9,4,-1,
+                   6,3,5,4,6,3,
+                   3,1,0,2,9,2,
+                   4,1,3,8,7,3,
+                   3,8,0,3,4,-5,
+                   3,5,3,7,8,-2,
+                   9,0,4,4,2,9;
     predictors_use_index.push_back(0);
     predictors_use_index.push_back(1);
     predictors_use_index.push_back(2);
@@ -72,7 +73,7 @@ protected:
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 TEST_F(FitMathMedTest, CheckSplitData){
-  deker::fit::Split_Data split_data_test(data_matrix,predictors_use_index,which_response);
+  deker::fit::Split_Data split_data_test(data_matrix,which_response,predictors_use_index);
   //
   double response_diff_check = (split_data_test.response-data_matrix.col(5)).array().abs().sum();
   ASSERT_NEAR(response_diff_check,0,1e-10)<<"response does not match imputed data";
@@ -85,19 +86,21 @@ TEST_F(FitMathMedTest, CheckSplitData){
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 TEST_F(FitMathMedTest, OptSigmaTest){
+  std::cerr<<"Blorpglob\n";
   deker::fit::Solve_deker deker_test(data_matrix,predictors_use_index,which_response,control);
+  std::cerr<<"Globblorp\n";
   //
   std::vector<unsigned> feature_index = deker_test.get_input_data().predictors_index;
   Eigen::VectorXd v = Eigen::VectorXd::Constant(feature_index.size(),1);
   //
+  std::cerr<<"AA\n";
   double sigma = deker_test.opt_sigma(v,feature_index);
-  double df,logli,A,B;
-  std::tie(df,logli,A,B) = deker_test.calc_model_fit(sigma,v,feature_index);
+  double df,logli;
+  std::cerr<<"checkechk\n";
+  std::tie(df,logli) = deker_test.calc_model_fit(sigma,v,feature_index);
   std::cerr<<"sigma "<<sigma<<"\n";
   std::cerr<<"df "<<df<<"\n";
   std::cerr<<"logli "<<logli<<"\n";
-  std::cerr<<"A "<<A<<"\n";
-  std::cerr<<"B "<<B<<"\n";
   //ASSERT_NEAR(sigma,1.54834,1e-1)<<"sigma does not match hand-calculated value";
   //ASSERT_NEAR(AIC,23.0512542,1e-1)<<"BIC does not match hand-calculated value";
 }
@@ -114,12 +117,10 @@ TEST_F(FitMathMedTest, OptVTest){
   Eigen::VectorXd current_v = deker_test.opt_v(lambda,current_sigma,v,feature_index);
   //
   std::cerr<<"v "<<current_v.transpose()<<"\n";
-  double df,logli,A,B;
-  std::tie(df,logli,A,B) = deker_test.calc_model_fit(current_sigma,current_v,feature_index);
+  double df,logli;
+  std::tie(df,logli) = deker_test.calc_model_fit(current_sigma,current_v,feature_index);
   std::cerr<<"df "<<df<<"\n";
   std::cerr<<"logli "<<logli<<"\n";
-  std::cerr<<"A "<<A<<"\n";
-  std::cerr<<"B "<<B<<"\n";
   //ASSERT_NEAR(current_sigma,.885,5e-3);
   //ASSERT_NEAR(AIC,24,1e-1);
   //ASSERT_NEAR(current_v(0),.853,5e-3);
@@ -142,14 +143,12 @@ TEST_F(FitMathMedTest, SteffIterVTest){
   std::cerr<<"v "<<sol_test.v.transpose()<<"\n";
   std::cerr<<"return "<<sol_test.return_status<<"\n";
   //
-  double df,logli,A,B;
-  std::tie(df,logli,A,B) = deker_test.calc_model_fit(sol_test.sigma_kernel_width,
+  double df,logli;
+  std::tie(df,logli) = deker_test.calc_model_fit(sol_test.sigma_kernel_width,
            sol_test.v,
            sol_test.feature_index);
   std::cerr<<"df "<<df<<"\n";
   std::cerr<<"logli "<<logli<<"\n";
-  std::cerr<<"A "<<A<<"\n";
-  std::cerr<<"B "<<B<<"\n";
   //ASSERT_NEAR(current_sigma,.885,5e-3);
   //ASSERT_NEAR(AIC,24,1e-1);
   //ASSERT_NEAR(current_v(0),.853,5e-3);
@@ -173,19 +172,37 @@ TEST_F(FitMathMedTest, InnerFullOptTest){
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+TEST_F(FitMathMedTest, InnerFullOptTestV2){
+  deker::fit::Solve_deker deker_test(data_matrix,predictors_use_index,which_response,control);
+  //
+  deker::fit::Output_deker sol_test;
+  double lambda = .5;
+  //
+  deker_test.inner_full_opt(lambda,sol_test);
+  //
+  std::cerr<<"sigma "<<sol_test.sigma_kernel_width<<"\n";
+  std::cerr<<"v "<<sol_test.v.transpose()<<"\n";
+  std::cerr<<"return "<<sol_test.return_status<<"\n";
+  std::cerr<<"BIC "<<sol_test.BIC<<"\n";
+  //
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 TEST_F(FitMathMedTest, OptLambdaTest){
   control.lambda_init_max=1;
   control.lambda_bo_maxiter = 50;
   deker::fit::Solve_deker deker_test(data_matrix,predictors_use_index,which_response,control);
   //
-  deker::fit::Output_deker sol_test;
+  using Lambda_Opt_t = deker::fit::deker_Lambda_Optimizer<deker::fit::Solve_deker,&deker::fit::Solve_deker::inner_full_opt>;
+  Lambda_Opt_t lambda_opt;
+  lambda_opt.build(control);
   //
-  deker_test.opt_lambda(sol_test);
+  while(lambda_opt.opt_iteration(deker_test)){};
   //
-  std::cerr<<"lambda "<<sol_test.lambda_regularization<<"\n";
-  std::cerr<<"sigma "<<sol_test.sigma_kernel_width<<"\n";
-  std::cerr<<"v "<<sol_test.v.transpose()<<"\n";
-  std::cerr<<"return "<<sol_test.return_status<<"\n";
-  std::cerr<<"BIC "<<sol_test.BIC<<"\n";
+  std::cerr<<"lambda "<<lambda_opt.get_best_sol().lambda_regularization<<"\n";
+  std::cerr<<"sigma "<<lambda_opt.get_best_sol().sigma_kernel_width<<"\n";
+  std::cerr<<"v "<<lambda_opt.get_best_sol().v.transpose()<<"\n";
+  std::cerr<<"return "<<lambda_opt.get_best_sol().return_status<<"\n";
+  std::cerr<<"BIC "<<lambda_opt.get_best_sol().BIC<<"\n";
   //
 }

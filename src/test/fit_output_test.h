@@ -44,6 +44,13 @@ TEST (OutputTest, OutputWriteRead){
   ref_test.feature_index.push_back(1);
   ref_test.feature_index.push_back(2);
   ref_test.feature_index.push_back(4);
+  ref_test.key_to_original_data.push_back(0);
+  ref_test.key_to_original_data.push_back(1);
+  ref_test.key_to_original_data.push_back(2);
+  ref_test.key_to_original_data.push_back(4);
+  ref_test.key_to_original_data.push_back(8);
+  ref_test.key_to_original_data.push_back(9);
+  ref_test.key_to_original_data.push_back(10);
   ref_test.feature_names.push_back("A0");
   ref_test.feature_names.push_back("B1");
   ref_test.feature_names.push_back("C2");
@@ -54,9 +61,10 @@ TEST (OutputTest, OutputWriteRead){
   }
   //location to write test file to
   std::string write_test_loc = "write_test_loc.dout";
-  ref_test.write_binary(write_test_loc); //writes to text
+  deker::io::write_to_binary<deker::fit::Output_deker_IO>(write_test_loc,ref_test);
   //read from location, building new control file 
-  deker::fit::Output_deker_IO bin_wr(write_test_loc); 
+  deker::fit::Output_deker_IO bin_wr; 
+  deker::io::read_from_binary<deker::fit::Output_deker_IO>(write_test_loc,bin_wr);
   //compare values in ref_test to bin_wr
   ASSERT_EQ(ref_test.lambda_regularization,bin_wr.lambda_regularization)<<"lambda doesn't match";
   ASSERT_EQ(ref_test.sigma_kernel_width,bin_wr.sigma_kernel_width)<<"sigma doesn't match";
@@ -70,6 +78,14 @@ TEST (OutputTest, OutputWriteRead){
   ASSERT_EQ(ref_test.v.size(),bin_wr.v.size())<<"v of unequal sizes";
   for(unsigned i = 0;i<ref_test.v.size();i++)
     ASSERT_EQ(ref_test.v(i),bin_wr.v(i))<<"v differs at index "<<i;
+  //
+  ASSERT_EQ(ref_test.feature_index.size(),bin_wr.feature_index.size())<<"feature_index of unequal sizes";
+  for(unsigned i = 0;i<ref_test.feature_index.size();i++)
+    ASSERT_EQ(ref_test.feature_index.at(i),bin_wr.feature_index.at(i))<<"feature_index differs at index "<<i;
+  //
+  ASSERT_EQ(ref_test.key_to_original_data.size(),bin_wr.key_to_original_data.size())<<"key_to_original_data of unequal sizes";
+  for(unsigned i = 0;i<ref_test.key_to_original_data.size();i++)
+    ASSERT_EQ(ref_test.key_to_original_data.at(i),bin_wr.key_to_original_data.at(i))<<"key_to_original_data differs at index "<<i;
   //
   ASSERT_EQ(ref_test.feature_names.size(),bin_wr.feature_names.size())<<"feature_names of unequal sizes";
   for(unsigned i = 0;i<ref_test.feature_names.size();i++)

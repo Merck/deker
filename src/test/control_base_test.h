@@ -32,6 +32,7 @@ TEST (ControlBaseTest, ControlBaseTextWriteRead){
   deker::io::Control_Base ref_test;
   //constructors fill Opt_Param with default values
   ref_test.data_file="test_data_loc.csv";
+  ref_test.lambda_iter_per_job = 5;
   //fake data for in_res
   ref_test.in_res.push_back(0);
   ref_test.in_res.push_back(1);
@@ -52,9 +53,11 @@ TEST (ControlBaseTest, ControlBaseTextWriteRead){
   std::string write_test_loc = "write_test_loc.control";
   ref_test.write_control_file(write_test_loc); //writes to text
   //read from location, building new control file 
-  deker::io::Control_Base text_wr(write_test_loc); 
+  deker::io::Control_Base text_wr;
+  text_wr.read_from_txt_file(write_test_loc);
   //compare values in ref_test to text_wr
   ASSERT_EQ(ref_test.data_file,text_wr.data_file)<<"data_file doesn't match";
+  ASSERT_EQ(ref_test.lambda_iter_per_job,text_wr.lambda_iter_per_job)<<"lambda_iter_per_job doesn't match";
   ASSERT_EQ(ref_test.in_res,text_wr.in_res)<<"in_res doesn't match";
   ASSERT_EQ(ref_test.ex_res,text_wr.ex_res)<<"ex_res doesn't match";
   ASSERT_EQ(ref_test.in_pred,text_wr.in_pred)<<"in_pred doesn't match";
@@ -74,6 +77,7 @@ TEST (ControlBaseTest, ControlBaseBinWriteRead){
   deker::io::Control_Base ref_test;
   //constructors fill Opt_Param/HOpt_Param with default values
   ref_test.data_file="test_data_loc.csv";
+  ref_test.lambda_iter_per_job = 5;
   //fake data for in_res
   ref_test.in_res.push_back(0);
   ref_test.in_res.push_back(1);
@@ -93,16 +97,19 @@ TEST (ControlBaseTest, ControlBaseBinWriteRead){
   //location to write test file to
   std::string write_test_loc = "write_test_loc.control";
   //write to file
-  std::ofstream outfile(write_test_loc, std::ios::out | std::ios::binary | std::ios::trunc);
-  ref_test.serialize(outfile);
-  outfile.close();
+  deker::io::write_to_binary<deker::io::Control_Base>(write_test_loc,ref_test);
+  //std::ofstream outfile(write_test_loc, std::ios::out | std::ios::binary | std::ios::trunc);
+  //ref_test.serialize(outfile);
+  //outfile.close();
   //read from location, building new control file 
   deker::io::Control_Base bin_wr;
-  std::ifstream infile(write_test_loc, std::ios::in | std::ios::binary);
-  bin_wr.serialize(infile);
-  infile.close();
+  deker::io::read_from_binary<deker::io::Control_Base>(write_test_loc,bin_wr);
+  //std::ifstream infile(write_test_loc, std::ios::in | std::ios::binary);
+  //bin_wr.serialize(infile);
+  //infile.close();
   //compare values in ref_test to text_wr
   ASSERT_EQ(ref_test.data_file,bin_wr.data_file)<<"data_file doesn't match";
+  ASSERT_EQ(ref_test.lambda_iter_per_job,bin_wr.lambda_iter_per_job)<<"lambda_iter_per_job doesn't match";
   ASSERT_EQ(ref_test.in_res,bin_wr.in_res)<<"in_res doesn't match";
   ASSERT_EQ(ref_test.ex_res,bin_wr.ex_res)<<"ex_res doesn't match";
   ASSERT_EQ(ref_test.in_pred,bin_wr.in_pred)<<"in_pred doesn't match";

@@ -26,7 +26,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #ifndef DEKER_IO_CONTROL
 #define DEKER_IO_CONTROL
-#include <deker/io/opt_param.h>
+#include <deker/fit/opt_param.h>
 #include <deker/io/misc.h>
 ////////////////////////////////
 namespace deker{
@@ -34,13 +34,20 @@ namespace deker{
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /////////////////////////////////////////////////////////////////////////////////////////////////
     struct Control_Base{
-      fit::Opt_Param_IO opt_param;
+      fit::Opt_Param opt_param;
       std::vector<unsigned> in_res, ex_res, in_pred, ex_pred;
+      std::vector<unsigned> exclude_sample;
       std::string data_file;
+      int lambda_iter_per_job;
+      double max_job_time;
       ///////////////////////////////////////////////////////
-      Control_Base(){}
+      Control_Base()
+      {
+        lambda_iter_per_job = -1;
+        max_job_time = -1;
+      }
       ///////////////////////////////////////////////////////
-      Control_Base(const std::string& input_file)
+      void read_from_txt_file(const std::string& input_file)
       {
         if(!file_exists_test(input_file)||input_file.empty())
           throw std::invalid_argument("input file not found\n");
@@ -66,6 +73,12 @@ namespace deker{
           }
           else if(identifier.compare("lambda_init_maxiter") == 0){
             opt_param.lambda_init_maxiter = read_arg_to_val<int>(arg);
+          }
+          else if(identifier.compare("lambda_fill_mindist") == 0){
+            opt_param.lambda_fill_mindist = read_arg_to_val<double>(arg);
+          }
+          else if(identifier.compare("lambda_fill_maxiter") == 0){
+            opt_param.lambda_fill_maxiter = read_arg_to_val<int>(arg);
           }
           else if(identifier.compare("lambda_bo_maxiter") == 0){
             opt_param.lambda_bo_maxiter = read_arg_to_val<int>(arg);
@@ -97,6 +110,15 @@ namespace deker{
           else if(identifier.compare("exclude_predictor") == 0){
             ex_pred = read_arg_to_vector<unsigned>(arg);
           }
+          else if(identifier.compare("exclude_sample") == 0){
+            exclude_sample = read_arg_to_vector<unsigned>(arg);
+          }
+          else if(identifier.compare("lambda_iter_per_job") == 0){
+            lambda_iter_per_job = read_arg_to_val<int>(arg);
+          }
+          else if(identifier.compare("max_job_time") == 0){
+            max_job_time = read_arg_to_val<double>(arg);
+          }
         }
       }
       ///////////////////////////////////////////////////////
@@ -113,11 +135,17 @@ namespace deker{
         //predictor include/exclude
         serialize_vector<unsigned>(infile,in_pred);
         serialize_vector<unsigned>(infile,ex_pred);
+        //exclude sample
+        serialize_vector<unsigned>(infile,exclude_sample);
+        //lambda_iter_per_job
+        infile.read((char*) (&lambda_iter_per_job), sizeof(lambda_iter_per_job));
+        //max_job_time
+        infile.read((char*) (&max_job_time), sizeof(max_job_time));
         //read h_opt & opt param structs
         opt_param.serialize(infile);
       }
       ///////////////////////////////////////////////////////
-      void serialize(std::ofstream& outfile)
+      void serialize(std::ofstream& outfile) const
       {
         //write data_file 
         size_t data_file_size = data_file.size();
@@ -129,24 +157,33 @@ namespace deker{
         //predictor include/exclude
         serialize_vector<unsigned>(outfile,in_pred);
         serialize_vector<unsigned>(outfile,ex_pred);
+        //exclude sample
+        serialize_vector<unsigned>(outfile,exclude_sample);
+        //lambda_iter_per_job
+        outfile.write((char*) (&lambda_iter_per_job),sizeof(lambda_iter_per_job));
+        //max_job_time
+        outfile.write((char*) (&max_job_time), sizeof(max_job_time));
         //write h_opt & opt param structs
         opt_param.serialize(outfile);
       }
       ///////////////////////////////////////////////////////
-      void text(std::ofstream& outfile)
+      void text(std::ofstream& outfile) const
       {
         outfile<<"h_huber_loss"<<" "<<opt_param.h_huber_loss<<"\n";
         outfile<<"w_convergence_threshold"<<" "<<opt_param.w_convergence_threshold<<"\n";
         outfile<<"w_maxiter"<<" "<<opt_param.w_maxiter<<"\n";
         outfile<<"feature_drop_threshold"<<" "<<opt_param.feature_drop_threshold<<"\n";
         outfile<<"data_file"<<" "<<data_file<<"\n";
+        outfile<<"lambda_iter_per_job"<<" "<<lambda_iter_per_job<<"\n";
+        outfile<<"max_job_time"<<" "<<max_job_time<<"\n";
         outfile<<"include_response"<<" "; write_vector_to_csv(outfile,in_res); outfile<<"\n";
         outfile<<"exclude_response"<<" "; write_vector_to_csv(outfile,ex_res); outfile<<"\n";
         outfile<<"include_predictor"<<" "; write_vector_to_csv(outfile,in_pred); outfile<<"\n";
         outfile<<"exclude_predictor"<<" "; write_vector_to_csv(outfile,ex_pred); outfile<<"\n";
+        outfile<<"exclude_sample"<<" "; write_vector_to_csv(outfile,exclude_sample); outfile<<"\n";
       }
       ///////////////////////////////////////////////////////
-      void write_control_file(const std::string& output_file)
+      void write_control_file(const std::string& output_file) const
       {
         std::ofstream outfile(output_file,std::ios_base::app);
         text(outfile);

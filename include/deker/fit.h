@@ -29,19 +29,22 @@
 ///////////////////////////////////////////
 #include <deker/fit/math.h>
 #include <deker/fit/output.h>
-#include <deker/fit/platt_scaling.h>
+#include <deker/fit/predictions.h>
 #include <deker/fit/limbo_params.h>
+#include <fstream>
 ///////////////////////////////////////////
 namespace deker{
   namespace fit{
     /////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////////////////////////////////////////////////////////////////////
     class Solve_deker{
-    private:
-      const Split_Data input_data;
-      const Response_Labels response_labels;
-      const Opt_Param control;
+    protected:
+      Split_Data input_data;
+      Response_Labels response_labels;
+      Opt_Param control;
+      double null_BIC;
       //
+    private:
       limbo::opt::NLOptNoGrad<PF_Params,nlopt::LN_BOBYQA> limbo_nograd_solver;
       limbo::opt::NLOptNoGrad<PF_Params,nlopt::GN_DIRECT_L> limbo_global_nograd_solver;
       limbo::opt::NLOptGrad<FS_Params> limbo_lbfgs_solver;
@@ -49,7 +52,6 @@ namespace deker{
       /////////////////////////////////////////////////////////////////////////////////////////////////
       struct v_opt_prob{
         Eigen::MatrixXd z_cache;
-        Eigen::VectorXd w_transform;
         Eigen::VectorXd z_cache_col_multiple;
         const Solve_deker* parent;
         const double& lambda_regularization;
@@ -61,7 +63,9 @@ namespace deker{
                    const Solve_deker* parent):
           lambda_regularization(lambda_regularization),parent(parent)
         {
-          std::tie(z_cache,w_transform,z_cache_col_multiple) = math::calc_z_cache(parent->get_input_data(),parent->get_response_labels(),sigma_kernel_width,v,feature_index,true); //rebuild z, excluding train from test
+          //std::vector<Eigen::MatrixXd> threshold_diff_mat(math::calc_threshold_diff_mat(parent->get_input_data(),parent->get_response_labels(),sigma_kernel_width,v,feature_index,true));
+          std::tie(z_cache,z_cache_col_multiple) = math::calc_z_cache(parent->get_input_data(),parent->get_response_labels(),sigma_kernel_width,v,feature_index,true,true);
+          //std::tie(z_cache,z_cache_col_multiple) = math::calc_z_cache(parent->get_input_data(),parent->get_response_labels(),sigma_kernel_width,v,feature_index,true); //rebuild z, excluding train from test
         }
         ///////////
         limbo::opt::eval_t operator() (const Eigen::Ref<const Eigen::VectorXd> opt_vec, bool eval_grad = false) const
@@ -106,85 +110,102 @@ namespace deker{
         limbo::opt::eval_t operator() (const Eigen::Ref<const Eigen::VectorXd> opt_vec, bool eval_grad = false) const
         {
           double use_sigma = convert_from_bounded(opt_vec(0));
-          double tmp_df, tmp_logli,tmp_A,tmp_B;
-          std::tie(tmp_df,tmp_logli,tmp_A,tmp_B) = parent->calc_model_fit(use_sigma,v_current,feature_index_current);
+          double tmp_df, tmp_logli;
+          std::tie(tmp_df,tmp_logli) = parent->calc_model_fit(use_sigma,v_current,feature_index_current);
           double fx = -log((double) parent->input_data.response.size())*tmp_df+2*tmp_logli;
+          //std::cerr<<use_sigma<<" "<<tmp_df<<" "<<tmp_logli<<" "<<fx<<"\n";
           return limbo::opt::no_grad(fx);
         }
       };
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
-      std::tuple<double,std::vector<double>,std::vector<double>> lambda_rangefind(Output_deker& sol) const
+    public:
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      Solve_deker(Eigen::MatrixXd& data_matrix,
+                  const unsigned& which_response):
+      input_data(data_matrix,which_response),
+      response_labels(input_data.response)
+      {}
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      Solve_deker(Eigen::MatrixXd& data_matrix,
+                  const std::vector<unsigned>& predictors_use_index,
+                  const unsigned& which_response,
+                  const Opt_Param& input_control): 
+      input_data(data_matrix,which_response,predictors_use_index),
+      response_labels(input_data.response)
       {
-        double lambda_max = control.lambda_init_max;
-        double stepsize = control.lambda_init_stepsize;
-        int iter = 1;
-        std::vector<double> sampled_lambda;
-        std::vector<double> sampled_BIC;
-        /////////////////////////////////////////////////////////////
-        while(true){
-          Output_deker new_sol;
-          new_sol.lambda_regularization = stepsize * lambda_max;
-          inner_full_opt(new_sol.lambda_regularization,new_sol);
-          std::cerr<<"  lambda "<<new_sol.lambda_regularization<<" BIC "<<new_sol.BIC<<"\n";
-          //
-          if(new_sol.return_status==2){
-            lambda_max = new_sol.lambda_regularization;
-          }else if(new_sol.feature_index.size()>0){
-            if(sampled_lambda.size()==0 || new_sol.BIC < sol.BIC){
-              sol(new_sol);
-            }
-            stepsize += (1-stepsize)*.5; //reduce step size - gone too far
-            sampled_lambda.push_back(new_sol.lambda_regularization);
-            sampled_BIC.push_back(new_sol.BIC);
-          }
-          if(new_sol.lambda_regularization<control.lambda_init_min||stepsize>=.95){
-            break;
-          }
-          if(iter==control.lambda_init_maxiter){
-            break;
-          }
-          iter++;
-        }
-        return std::make_tuple(lambda_max,sampled_lambda,sampled_BIC);
+        build(predictors_use_index,input_control);
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
-    public: 
+      void build(const std::vector<unsigned>& predictors_use_index,
+                 const Opt_Param& input_control)
+      {
+        input_data.build(predictors_use_index);
+        response_labels.build();
+        null_BIC = math::calc_null_BIC(response_labels);
+        control = input_control;
+        //do some stuff to drop obviously extraneous features
+        if(input_data.predictors_index.size()>2){
+          std::vector<unsigned> initial_feature_index = input_data.predictors_index; //feature_index
+          Eigen::VectorXd initial_v = Eigen::VectorXd::Constant(initial_feature_index.size(),1); //initial v
+          double initial_sigma = opt_sigma(initial_v,initial_feature_index);
+          double initial_lambda = 0;
+          //builds z_cache etc.
+          v_opt_prob v_opt_tmp(initial_lambda,initial_sigma,initial_v,initial_feature_index,this);
+          //get column sums & censored (sum for classification problems where margin fails)
+          Eigen::VectorXd z_col_sum = (v_opt_tmp.z_cache.array().transpose().colwise()*v_opt_tmp.z_cache_col_multiple.array()).colwise().sum()/(v_opt_tmp.z_cache_col_multiple.sum());
+          Eigen::VectorXd cens_z_col_sum = Eigen::VectorXd::Zero(v_opt_tmp.z_cache.rows());
+          double cens_cols = 0;
+          for(unsigned i=0;i<v_opt_tmp.z_cache.cols();i++){
+            if(v_opt_tmp.z_cache.col(i).sum()<=1.0){
+              cens_z_col_sum+=v_opt_tmp.z_cache.col(i)*v_opt_tmp.z_cache_col_multiple(i);
+              cens_cols+=v_opt_tmp.z_cache_col_multiple(i);
+            }
+          }
+          if(cens_cols>0){
+            cens_z_col_sum.array()/=cens_cols;
+          }
+          double elbow_sum = math::find_elbow(z_col_sum);
+          double elbow_cens_sum = math::find_elbow(cens_z_col_sum);
+          ///
+          //debug only
+          //std::cerr<<elbow_sum<<" "<<elbow_cens_sum<<"\n";
+          //std::vector<unsigned> keep_features;
+          //drop features that aren't contributing to total & censored - these will get zero'd out in the first run anyway
+          for(int i=initial_feature_index.size()-1;i>=0;i--){
+            if(z_col_sum(i)<elbow_sum&&cens_z_col_sum(i)<elbow_cens_sum){
+              if(i < initial_feature_index.size()-1){
+                initial_feature_index.at(i)=initial_feature_index.back();
+              }
+              initial_feature_index.pop_back();
+            }
+            //else{
+            //debug only
+            //  keep_features.push_back(i);
+            //}
+          }
+          //out for debugging
+          // for(unsigned i = 0;i<initial_feature_index.size();i++){
+          //   std::cerr<<
+          //     //initial_feature_index.at(i)<<" "<<
+          //     input_data.predictors_index.at(keep_features.at(i))<<" "<<
+          //       z_col_sum(keep_features.at(i))<<" "<<
+          //         cens_z_col_sum(keep_features.at(i))<<"\n";
+          // }
+          input_data.subset_predictors(initial_feature_index);
+        }
+      }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
-      Solve_deker(const Eigen::Ref<const Eigen::MatrixXd> data_matrix,
-                  const std::vector<unsigned>& predictors_use_index,
-                  const unsigned& which_response,
-                  const Opt_Param& control): 
-      input_data(data_matrix,predictors_use_index,which_response),
-      response_labels(input_data.response,input_data.response_sort_index),
-      control(control){}
-      /////////////////////////////////////////////////////////////////////////////////////////////////
-      /////////////////////////////////////////////////////////////////////////////////////////////////
-      std::tuple<double,double,double,double> calc_model_fit(const double& sigma_kernel_width,
+      std::tuple<double,double> calc_model_fit(const double& sigma_kernel_width,
                                                              const Eigen::Ref<const Eigen::VectorXd> v,
                                                              const std::vector<unsigned>& feature_index) const
       {
-        Eigen::MatrixXd tmp_z_cache = std::get<0>(math::calc_z_cache(input_data,response_labels,sigma_kernel_width,v,feature_index,false,false));
-        //calculate properties = flat, samples in blocks with thresholds in blocks
-        Eigen::VectorXd predicted = (tmp_z_cache.array().colwise()*(v.array().square()/v.array().square().sum())).colwise().sum();
-        //do Platt scaling to get probabilities
-        Eigen::Map<const Eigen::ArrayXd> lab_array(response_labels.y_labels.data(),response_labels.y_labels.size());
-        Platt_Params platt_params;
-        double A, B;
-        std::tie(A,B) = platt_scaling(predicted,lab_array,platt_params);
-        Eigen::VectorXd probs = rescale_deci_by_platt(predicted,A,B);
-        //calculate degrees of freedom
-        Eigen::Map<Eigen::MatrixXd> prob_mat(probs.data(),input_data.response_sort_index.size(),response_labels.y_labels.cols());
-        Eigen::MatrixXd pseudohat = prob_mat*response_labels.y_labels_pseudoinv;
-        //like taking the trace of the true hat matrix, but uses any value where the pseudoident (y*y^cross) is non-zero
-        double df = (response_labels.y_labels_pseudoident.array() > 1e-10).select(pseudohat,0).sum();
-        if(df < 0){df = std::numeric_limits<double>::max();}
-        //calculate log likelihood
-        double logli = (prob_mat.array()*response_labels.y_labels.array()+(1-prob_mat.array())*(1-response_labels.y_labels.array())).log().sum();
-        logli /= (double) response_labels.y_labels.cols();
-        return std::make_tuple(df,logli,A,B);
+        Predictions_deker predict(input_data,response_labels,sigma_kernel_width,v,feature_index);
+        return predict.get_fit();
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -193,6 +214,9 @@ namespace deker{
       {
         Eigen::MatrixXd temp_kernel = math::calc_kernel_matrix(input_data,0,v,feature_index);
         double max_el = -temp_kernel.minCoeff();
+        if(max_el<=0){
+          return 0;
+        }
         //smallest_diff will be 10 or less, but greater than 0
         double smallest_diff = (temp_kernel.array() == -max_el).select(10.0,temp_kernel.array()+max_el).minCoeff();
         double min_sigma = .5*(log(smallest_diff/2.0)-log(1e5)); //sigma where the smallest difference is very large (only nearest neighbor)
@@ -212,11 +236,8 @@ namespace deker{
       {
         //find best v given sigma
         v_opt_prob v_opt_tmp(lambda_regularization,sigma_kernel_width,v,feature_index,this);
-        Eigen::VectorXd transform_v = (v.array().square()/v_opt_tmp.w_transform.array()).sqrt();
-        Eigen::VectorXd v_max_temp = limbo_lbfgs_solver(v_opt_tmp,transform_v,false);
-        //calculate the next v by transforming with w_transform
-        v_max_temp = (v_max_temp.array().square()*v_opt_tmp.w_transform.array()).sqrt();
-        return v_max_temp;
+        Eigen::VectorXd v_new = limbo_lbfgs_solver(v_opt_tmp,v,false);
+        return v_new.array().abs();
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -227,11 +248,14 @@ namespace deker{
         Eigen::MatrixXd v_i(sol.v.size()+1,4);
         v_i(0,0) = sol.sigma_kernel_width;
         v_i.block(1,0,sol.v.size(),1) = sol.v;
+        //std::cerr<<" (v) "<<v_i.col(0).transpose()<<"\n";
         for(unsigned i = 1; i<v_i.cols(); i++){
           //find best sigma given v
+          //std::cerr<<"***********************************\n";
           v_i(0,i) = opt_sigma(v_i.block(1,i-1,sol.v.size(),1),sol.feature_index);
           //find best v given sigma
           v_i.block(1,i,sol.v.size(),1) = opt_v(lambda_regularization,v_i(0,i),v_i.block(1,i-1,sol.v.size(),1),sol.feature_index);
+          //std::cerr<<" (v) "<<v_i.col(i).transpose()<<"\n";
           //Early exit if fixed point is found in these iterations; no need to do steffensen, which may break
           double v_diff_test = math::diff_test(v_i.block(1,i-1,sol.v.size(),1),v_i.block(1,i,sol.v.size(),1));
           if(v_diff_test <= control.w_convergence_threshold && std::abs(v_i(0,i-1)-v_i(0,i))<1e-4){ 
@@ -239,9 +263,9 @@ namespace deker{
             sol.v = v_i.block(1,i,sol.v.size(),1);
             sol.return_status = 1; //w is a fixed point
             math::update_v_with_drop(control.feature_drop_threshold,
-                               sol.feature_index, //updates
-                               v_i.block(1,i-1,sol.v.size(),1),  
-                               sol.v); //updates
+                                     sol.feature_index, //updates
+                                     v_i.block(1,i-1,sol.v.size(),1),  
+                                     sol.v); //updates
             break;
           }
         }
@@ -255,9 +279,9 @@ namespace deker{
             sol.return_status = 1;
           }
           math::update_v_with_drop(control.feature_drop_threshold,
-                             sol.feature_index, //updates
-                             v_i.block(1,0,sol.v.size(),1),  
-                             sol.v); //updates
+                                   sol.feature_index, //updates
+                                   v_i.block(1,0,sol.v.size(),1),  
+                                   sol.v); //updates
         }
         if(sol.feature_index.size()==0){
           sol.return_status = 2;
@@ -268,94 +292,63 @@ namespace deker{
       void inner_full_opt(const double& lambda_regularization,
                           Output_deker& sol) const
       {
+        std::cerr<<"***********\n";
         //set lambda in container
         sol.lambda_regularization = lambda_regularization;
         //initial values for v & sigma
         sol.feature_index = input_data.predictors_index;
+        sol.key_to_original_data = input_data.key_to_original_data;
         sol.v = Eigen::VectorXd::Constant(sol.feature_index.size(),1);
         sol.sigma_kernel_width = 5;
         sol.return_status = 0;
+        sol.df = 0;
+        sol.logli = 0;
         sol.BIC = 0;
         ///
         int iter = 0;
         for(; iter<control.w_maxiter; iter++){
           steff_iter_v(lambda_regularization,sol);
+          std::cerr<<"  sigma "<<sol.sigma_kernel_width<<" v "<<sol.v.transpose()<<"\n";
           if(sol.return_status != 0) break;
         }
         if(iter >= control.w_maxiter){
           sol.return_status = 3;
         }
         if(sol.return_status != 2){ //feature_index.size() > 0
-          double df,lf_error,A,B;
-          std::tie(df,lf_error,A,B) = calc_model_fit(sol.sigma_kernel_width,
-                                                     sol.v,
-                                                     sol.feature_index);
-          sol.BIC = log((double)input_data.response.size())*df-2*lf_error;
+          
+          Predictions_deker predict(input_data,response_labels,sol.sigma_kernel_width,sol.v,sol.feature_index);
+          //double df,lf_error;
+          std::tie(sol.df,sol.logli) = predict.get_fit();
+          sol.BIC = log((double)input_data.response.size())*sol.df-2*sol.logli;
+          
+          std::cerr<<"***********\n";
+          std::cerr<<"full_opt df "<<sol.df<<" lf_error "<<sol.logli<<" BIC "<<sol.BIC<<"\n";
         }
       }
       /////////////////////////////////////////////////////////////////////////////////////////////////
       /////////////////////////////////////////////////////////////////////////////////////////////////
-      void opt_lambda(Output_deker& sol) const
-      {
-        double lambda_max;
-        std::vector<double> sampled_lambda,sampled_BIC;
-        std::tie(lambda_max,sampled_lambda,sampled_BIC) = lambda_rangefind(sol);
-        std::cerr<<"  rangefind done\n";
-        //typedefs for BO machinery
-        using kernel_t = limbo::kernel::Exp<Limbo_Params>;
-        using mean_t = limbo::mean::Data<Limbo_Params>;
-        using hopt_t = limbo::model::gp::KernelLFOpt<Limbo_Params,limbo::opt::Rprop<Limbo_Params>>;
-        using model_t = limbo::model::GP<Limbo_Params, kernel_t, mean_t, hopt_t>;
-        using acqui_optimizer_t = limbo::opt::NLOptNoGrad<Limbo_Params>;
-        using acqui_function_t = limbo::acqui::GP_UCB<Limbo_Params, model_t>;
-        //BO machinery
-        model_t bo_model(1,1);
-        //
-        FirstElem afun;
-        
-        acqui_optimizer_t acqui_optimizer;
-        //put lambda into a vector, divide by max (so it's in [0,1])
-        Eigen::VectorXd lambda_vec(1);
-        Eigen::VectorXd BIC_vec(1);
-        //
-        for(unsigned i = 0; i<sampled_lambda.size();i++){
-          lambda_vec(0) = sampled_lambda.at(i)/lambda_max;
-          BIC_vec(0) = -sampled_BIC.at(i);
-          bo_model.add_sample(lambda_vec,BIC_vec);
-        } 
-        bo_model.optimize_hyperparams();
-        ///////////////////////////////////////////////////////////////////////////////////////
-        for(unsigned i = 0; i<control.lambda_bo_maxiter; i++){
-          acqui_function_t acqui(bo_model, i+sampled_lambda.size());
-          auto acqui_optimization = [&](const Eigen::VectorXd& x, bool g) { return acqui(x, afun, g); };
-          Eigen::VectorXd starting_point = limbo::tools::random_vector(1, true);
-          Eigen::VectorXd new_sample = acqui_optimizer(acqui_optimization, starting_point, true);
-          Output_deker new_sol;
-          new_sol.lambda_regularization = new_sample(0)*lambda_max;
-          //
-          inner_full_opt(new_sol.lambda_regularization,new_sol);
-          std::cerr<<"  lambda "<<new_sol.lambda_regularization<<" BIC "<<new_sol.BIC<<"\n";
-          //set objective to lowest possible if all features are removed
-          if(new_sol.return_status == 2){
-            new_sol.BIC = std::numeric_limits<double>::max();
-          }else{
-            if(new_sol.BIC<sol.BIC){
-              sol(new_sol);
-            }
-          }
-          //build for next iteration
-          //divide by max so it's in [0,1]
-          lambda_vec(0) = new_sol.lambda_regularization/lambda_max;
-          BIC_vec(0) = -new_sol.BIC;
-          //
-          bo_model.add_sample(lambda_vec,BIC_vec);
-          bo_model.optimize_hyperparams();
-        }
-      }
-      /////////////////////////////////////////////////////////////////////////////////////////////////
-      /////////////////////////////////////////////////////////////////////////////////////////////////
-      const Response_Labels& get_response_labels() const {return response_labels;}
       const Split_Data& get_input_data() const {return input_data;}
+      const Response_Labels& get_response_labels() const {return response_labels;}
+      const Opt_Param& get_opt_param() const {return control;}
+      double get_null_BIC() const {return null_BIC;}
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      void serialize(std::ifstream& infile)
+      {
+        input_data.serialize(infile);
+        response_labels.serialize(infile);
+        control.serialize(infile);
+        infile.read((char*) (&null_BIC),sizeof(null_BIC));
+      }
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      /////////////////////////////////////////////////////////////////////////////////////////////////
+      void serialize(std::ofstream& outfile) const
+      {
+        input_data.serialize(outfile);
+        response_labels.serialize(outfile);
+        control.serialize(outfile);
+        outfile.write((char*) (&null_BIC),sizeof(null_BIC));
+      }
     };
     /////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////////////////////////////////////////////////////////////////////

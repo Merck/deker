@@ -26,8 +26,10 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #ifndef DEKER_IO_MISC
 #define DEKER_IO_MISC
+////////////////////////////////
 #include <Eigen/Core>
 #include <vector>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -48,7 +50,24 @@ namespace deker {
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////////////////////////////////////////////////////////////////////
-    template <typename T>
+    void serialize_string(std::ifstream& infile,std::string& to_read)
+    {
+      size_t temp_size;
+      infile.read((char*) (&temp_size), sizeof(temp_size));
+      to_read.resize(temp_size);
+      infile.read(&to_read[0], temp_size);
+    }
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    void serialize_string(std::ofstream& outfile,const std::string& to_write)
+    {
+      size_t temp_size = to_write.size();
+      outfile.write((char*) (&temp_size),sizeof(temp_size));
+      outfile.write(to_write.c_str(), temp_size);
+    }
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    template <class T>
     void serialize_vector(std::ifstream& infile,std::vector<T>& to_read)
     {
       to_read.clear();
@@ -62,7 +81,7 @@ namespace deker {
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////////////////////////////////////////////////////////////////////
-    template <typename T>
+    template <class T>
     void serialize_vector(std::ofstream& outfile,const std::vector<T>& to_write)
     {
       size_t size;
@@ -78,38 +97,89 @@ namespace deker {
       Eigen::MatrixXd matrix;
       std::vector<std::string> feature_names;
       ///////////////////////////////
-      void serialize(std::ifstream& infile, const bool& sizes_only=false)
+      Eigen_Matrix_IO(){
+        rows=0;
+        cols=0;
+      }
+      ///////////////////////////////
+      Eigen_Matrix_IO(const std::string& filename, const bool& is_binary=true, const bool& sizes_only=false, const bool& names_only=false)
       {
-        //Eigen::MatrixXd::Index rows=0, cols=0;
+        if(!file_exists_test(filename)||filename.empty())
+          throw std::invalid_argument("(Eigen_Matrix_IO()) Data file not found at provided location\n");
+        if(is_binary){
+          std::ifstream infile(filename, std::ios::in | std::ios::binary);
+          serialize(infile,sizes_only,names_only);
+          infile.close();
+        }else{
+          std::ifstream infile(filename, std::ios::in);
+          text(infile);
+          infile.close();
+        }
+      }
+      ///////////////////////////////
+      void build(const Eigen::Ref<const Eigen::MatrixXd> new_matrix, std::vector<std::string> new_names)
+      {
+        matrix = new_matrix;
+        rows = matrix.rows();
+        cols = matrix.cols();
+        feature_names = new_names;
+      }
+      ///////////////////////////////
+      void drop_rows(const std::vector<unsigned> drop_inds)
+      {
+        std::vector<unsigned> sort_drop(drop_inds);
+        std::sort(sort_drop.rbegin(),sort_drop.rend()); //sort in descending order
+        if(sort_drop.at(0)>matrix.rows())
+          throw std::invalid_argument("(Eigen_Matrix_IO::drop_rows()) Row index to drop from matrix is greater than total rows in matrix");
+        for(unsigned i = 0;i<sort_drop.size();i++){ //switch rows to drop with last rows
+          if(sort_drop.at(i)!=matrix.rows()-1-i)
+            matrix.row(sort_drop.at(i)) = matrix.row(matrix.rows()-1-i);
+        }
+        //drop rows
+        matrix.conservativeResize(matrix.rows()-sort_drop.size(),matrix.cols());
+        rows=matrix.rows();
+      }
+      ///////////////////////////////
+      void serialize(std::ifstream& infile, const bool& sizes_only=false, const bool& names_only=false)
+      {
         infile.read((char*) (&rows),sizeof(Eigen::MatrixXd::Index));
         infile.read((char*) (&cols),sizeof(Eigen::MatrixXd::Index));
         if(!sizes_only){
-          matrix.resize(rows, cols);
-          infile.read( (char *) matrix.data() , rows*cols*sizeof(Eigen::MatrixXd::Scalar) );
-          //read in row names data
+          //read in feature names
           feature_names.clear();
+          size_t n_names;
+          infile.read((char*) (&n_names), sizeof(n_names));
           size_t size;
           std::string str;
-          while(infile.read((char*) (&size), sizeof(size))){
+          for(size_t i = 0; i<n_names; i++){
+            infile.read((char*) (&size), sizeof(size));
             str.resize(size);
             infile.read(&str[0], size);
             feature_names.push_back(str);
           }
+          if(!names_only){
+            //read in data matrix
+            matrix.resize(rows, cols);
+            infile.read((char*) matrix.data(), rows*cols*sizeof(Eigen::MatrixXd::Scalar));
+          }
         }
       }
       ///////////////////////////////
-      void serialize(std::ofstream& outfile)
+      void serialize(std::ofstream& outfile) const
       {
-        //Eigen::MatrixXd::Index rows=matrix.rows(), cols=matrix.cols();
         outfile.write((char*) (&rows), sizeof(Eigen::MatrixXd::Index));
         outfile.write((char*) (&cols), sizeof(Eigen::MatrixXd::Index));
-        outfile.write((char*) matrix.data(), rows*cols*sizeof(Eigen::MatrixXd::Scalar));
-        //write in row names data
+        //write out feature names
+        size_t n_names = feature_names.size();
+        outfile.write((char*) (&n_names), sizeof(n_names));
         for(unsigned i = 0; i<feature_names.size();i++){
           size_t size=feature_names.at(i).size();
           outfile.write((char*) (&size),sizeof(size));
           outfile.write(feature_names.at(i).c_str(), size);
         }
+        //write out data matrix
+        outfile.write((char*) matrix.data(), rows*cols*sizeof(Eigen::MatrixXd::Scalar));
+        
       }
       ///////////////////////////////
       void text(std::ifstream& infile)
@@ -169,29 +239,6 @@ namespace deker {
           }
       }
       ///////////////////////////////
-      Eigen_Matrix_IO(){}
-      ///////////////////////////////
-      Eigen_Matrix_IO(const std::string& filename, const bool& is_binary=true, const bool& sizes_only=false)
-      {
-        if(!file_exists_test(filename)||filename.empty())
-          throw std::invalid_argument("Data file not found at provided location\n");
-        if(is_binary){
-          std::ifstream infile(filename, std::ios::in | std::ios::binary);
-          serialize(infile,sizes_only);
-          infile.close();
-        }else{
-          std::ifstream infile(filename, std::ios::in);
-          text(infile);
-          infile.close();
-        }
-      }
-      ///////////////////////////////
-      void write_to_binary(const std::string& filename){
-        std::ofstream outfile(filename, std::ios::out | std::ios::binary | std::ios::trunc);
-        serialize(outfile);
-        outfile.close();
-      }
-      ///////////////////////////////
       void write_to_text(const std::string& filename){
         std::ofstream outfile(filename, std::ios::out | std::ios::binary | std::ios::trunc);
         text(outfile);
@@ -214,7 +261,7 @@ namespace deker {
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////////////////////////////////////////////////////////////////////
-    template <typename Type>
+    template <class Type>
     void write_vector_to_csv(std::ofstream& outfile,const std::vector<Type>& to_write)
     {
       for(unsigned i = 0; i<to_write.size();i++){
@@ -237,6 +284,23 @@ namespace deker {
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////////////////////////////////////////////////////////////////////
+    template <class Type>
+    void write_to_binary(const std::string& output_file,const Type& write_class){
+      std::ofstream outfile(output_file, std::ios::out | std::ios::binary | std::ios::trunc);
+      write_class.serialize(outfile);
+      outfile.close();
+    }
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    template <class Type>
+    void read_from_binary(const std::string& input_file,Type& read_class){
+      if(!io::file_exists_test(input_file)||input_file.empty()){
+        throw std::invalid_argument("input file "+input_file+" not found");
+      }
+      std::ifstream infile(input_file, std::ios::in | std::ios::binary);
+      read_class.serialize(infile);
+      infile.close();
+    }
   }
 }
 ////////////////////////////////

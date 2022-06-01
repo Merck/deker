@@ -28,6 +28,7 @@
 #define DEKER_IO_OUTPUT
 ///////////////////////////////////////////
 #include <deker/fit/output.h>
+#include <deker/io/misc.h>
 #include <iostream>
 #include <fstream>
 ///////////////////////////////////////////
@@ -38,68 +39,59 @@ namespace deker{
       // double lambda_regularization;
       // double sigma_kernel_width;
       // double BIC;
+      // int return_status;
       // Eigen::VectorXd v;
       // std::vector<unsigned> feature_index;
+      // std::vector<unsigned> key_to_original_data;
       double null_BIC;
-      unsigned return_status;
       std::vector<std::string> feature_names;
       unsigned which_response;
       std::string response_name;
       std::string data_filename;
+      //
+      Eigen::VectorXd lgbm_imp;
+      double lgbm_l2_fit;
       /////////////////////////////////////
-      //constructor using a base Opt_Param
+      //constructor using a base Output_deker
       Output_deker_IO():Output_deker(){}
       Output_deker_IO(const Output_deker& out_deker):Output_deker(out_deker){}
       /////////////////////////////////////
       Output_deker_IO(const Output_deker& out_deker,
                       const std::vector<std::string>& full_feature_names,
                       const std::string& data_filename,
-                      const unsigned& which_response):
+                      const unsigned& which_response,
+                      const double& null_BIC,
+                      const Eigen::Ref<const Eigen::VectorXd> lgbm_imp_in,
+                      const double& lgbm_l2_fit):
         Output_deker(out_deker),
         data_filename(data_filename),
         which_response(which_response),
-        response_name(full_feature_names.at(which_response))
+        response_name(full_feature_names.at(which_response)),
+        null_BIC(null_BIC),
+        lgbm_l2_fit(lgbm_l2_fit)
         {
-          for(unsigned i = 0; i<feature_index.size(); i++)
-            feature_names.push_back(full_feature_names.at(feature_index.at(i)));
+          lgbm_imp.resize(feature_index.size());
+          for(unsigned i = 0; i<feature_index.size(); i++){
+            feature_names.push_back(full_feature_names.at(key_to_original_data.at(feature_index.at(i))));
+            lgbm_imp(i) = lgbm_imp_in(feature_index.at(i));
+          }
         }
-      /////////////////////////////////////
-      Output_deker_IO(const std::string& input_file)
-      {
-        if(io::file_exists_test(input_file)&&!input_file.empty()){
-          std::ifstream infile(input_file, std::ios::in | std::ios::binary);
-          serialize(infile);
-          infile.close();
-        }
-        else{
-          throw std::invalid_argument("input file "+input_file+" not found");
-        }
-      }
       ////////////////////////////////////////////////////
       void serialize(std::ifstream& infile)
       {
-        //read in from stream
-        infile.read((char*) (&lambda_regularization),sizeof(lambda_regularization));
-        infile.read((char*) (&sigma_kernel_width),sizeof(sigma_kernel_width));
-        infile.read((char*) (&BIC),sizeof(BIC));
-        infile.read((char*) (&return_status),sizeof(return_status));
+        Output_deker::serialize(infile);
+        feature_names.clear();
         infile.read((char*) (&null_BIC),sizeof(null_BIC));
         size_t n_features;
         infile.read((char*) (&n_features),sizeof(n_features));
-        v.resize(n_features);
         unsigned temp_index;
         size_t temp_name_size;
         std::string temp_name;
-        double temp_v;
         for(unsigned i = 0; i<n_features;i++){
-          infile.read((char*) (&temp_index), sizeof(unsigned));
-          feature_index.push_back(temp_index);
           infile.read((char*) (&temp_name_size), sizeof(temp_name_size));
           temp_name.resize(temp_name_size);
           infile.read(&temp_name[0], temp_name_size);
           feature_names.push_back(temp_name);
-          infile.read((char*) (&temp_v), sizeof(double));
-          v(i) = temp_v;
         }
         infile.read((char*) (&temp_name_size), sizeof(temp_name_size));
         data_filename.resize(temp_name_size);
@@ -108,23 +100,24 @@ namespace deker{
         infile.read((char*) (&temp_name_size), sizeof(temp_name_size));
         response_name.resize(temp_name_size);
         infile.read(&response_name[0],temp_name_size);
+        //
+        infile.read((char*) (&lgbm_l2_fit), sizeof(lgbm_l2_fit));
+        Eigen::MatrixXd::Index vec_size;
+        infile.read((char*) (&vec_size),sizeof(Eigen::MatrixXd::Index));
+        lgbm_imp.resize(vec_size);
+        infile.read((char*) lgbm_imp.data(),vec_size*sizeof(Eigen::MatrixXd::Scalar));
       }
       ////////////////////////////////////////////////////
-      void serialize(std::ofstream& outfile)
+      void serialize(std::ofstream& outfile) const
       {
-        outfile.write((char*) (&lambda_regularization), sizeof(lambda_regularization));
-        outfile.write((char*) (&sigma_kernel_width), sizeof(sigma_kernel_width));
-        outfile.write((char*) (&BIC), sizeof(BIC));
-        outfile.write((char*) (&return_status), sizeof(return_status));
+        Output_deker::serialize(outfile);
         outfile.write((char*) (&null_BIC), sizeof(null_BIC));
-        size_t n_features = v.size();
+        size_t n_features = feature_names.size();
         outfile.write((char*) (&n_features), sizeof(n_features));
         for(unsigned i = 0;i<n_features;i++){
-          outfile.write((char*) (&feature_index.at(i)),sizeof(unsigned));
           size_t size=feature_names.at(i).size();
           outfile.write((char*) (&size),sizeof(size));
           outfile.write(feature_names.at(i).c_str(), size);
-          outfile.write((char*) (&v(i)),sizeof(double));
         }
         size_t data_filename_size = data_filename.size();
         outfile.write((char*) (&data_filename_size),sizeof(data_filename_size));
@@ -133,13 +126,11 @@ namespace deker{
         size_t response_name_size = response_name.size();
         outfile.write((char*) (&response_name_size),sizeof(response_name_size));
         outfile.write(response_name.c_str(),response_name_size);
-      }
-      /////////////////////////////////////////////////////
-      void write_binary(const std::string& output_file)
-      {
-        std::ofstream outfile(output_file, std::ios::out | std::ios::binary | std::ios::trunc);
-        serialize(outfile);
-        outfile.close();
+        //
+        outfile.write((char*) (&lgbm_l2_fit), sizeof(lgbm_l2_fit));
+        Eigen::MatrixXd::Index vec_size=lgbm_imp.size();
+        outfile.write((char*) (&vec_size), sizeof(Eigen::MatrixXd::Index));
+        outfile.write((char*) lgbm_imp.data(), vec_size*sizeof(Eigen::MatrixXd::Scalar));
       }
       /////////////////////////////////////////////////////
       void write_to_csv_header(std::ofstream& outfile,
@@ -151,11 +142,15 @@ namespace deker{
           "response,"<<
             "lambda,"<<
               "sigma,"<<
-                "BIC,"<<
-                  "null_BIC,"<<
-                    "return_status,"<<
-                      "feature,"<<
-                        "weight\n";
+                "df,"<<
+                  "logli,"<<
+                    "BIC,"<<
+                      "null_BIC,"<<
+                        "return_status,"<<
+                          "lgbm_l2_fit,"<<
+                            "feature,"<<
+                              "weight,"<<
+                                "lgbm_imp\n";
       }
       /////////////////////////////////////////////////////
       void write_to_csv(std::ofstream& outfile,
@@ -168,11 +163,15 @@ namespace deker{
             response_name<<","<<
               lambda_regularization<<","<<
                 sigma_kernel_width<<","<<
-                  BIC<<","<<
-                    null_BIC<<","<<
-                      return_status<<","<<
-                        feature_names.at(i)<<","<<
-                          v(i)<<"\n";
+                  df<<","<<
+                    logli<<","<<
+                      BIC<<","<<
+                        null_BIC<<","<<
+                          return_status<<","<<
+                            lgbm_l2_fit<<","<<
+                              feature_names.at(i)<<","<<
+                                v(i)<<","<<
+                                  lgbm_imp(i)<<"\n";
         }
       }
       /////////////////////////////////////////////////////

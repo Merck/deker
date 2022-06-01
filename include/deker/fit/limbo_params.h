@@ -67,19 +67,17 @@ namespace deker{
       struct kernel : public limbo::defaults::kernel {
         BO_PARAM(double, noise, 1e-10);
       };
-      //struct kernel_maternfivehalves : public limbo::defaults::kernel_maternfivehalves {
-      //};
       struct kernel_exp : public limbo::defaults::kernel_exp {
       };
-      // we use 10 random samples to initialize the algorithm
+      // 10 random samples to initialize the algorithm
       struct init_randomsampling {
         BO_PARAM(int, samples, 10);
       };
-      // we stop after 40 iterations
+      // stop after 40 iterations
       struct stop_maxiterations {
         BO_PARAM(int, iterations, 40);
       };
-      // we use the default parameters for acqui_ucb
+      // default parameters for acqui_ucb
       struct acqui_gpucb : public limbo::defaults::acqui_gpucb {
         //BO_PARAM(double, delta, .35);
       };

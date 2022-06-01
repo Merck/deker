@@ -1,5 +1,4 @@
-deker_cmd_bin
-old_code
-Analysis_Mat_131.csv
-Analysis_Mat_131.dat
-CV_131.xval
+deker 
+deker_test
+deker
+*.sh

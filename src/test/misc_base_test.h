@@ -89,9 +89,11 @@ TEST (MiscBaseTest, Eigen_Matrix_IOBinaryWriteRead){
   ref_test.feature_names.push_back("J9"); 
   //location to write test file to
   std::string write_test_loc = "write_test_loc.csv";
-  ref_test.write_to_binary(write_test_loc); //writes to text
+  //ref_test.write_to_binary(write_test_loc); //writes to binary
+  deker::io::write_to_binary<deker::io::Eigen_Matrix_IO>(write_test_loc,ref_test);
   //read from location as text, building new matrix data
-  deker::io::Eigen_Matrix_IO bin_wr(write_test_loc);
+  deker::io::Eigen_Matrix_IO bin_wr;
+  deker::io::read_from_binary<deker::io::Eigen_Matrix_IO>(write_test_loc,bin_wr);
   //compare values in ref_test to bin_wr
   ASSERT_TRUE(ref_test.matrix.isApprox(bin_wr.matrix))<<"matrix doesn't match";
   ASSERT_EQ(ref_test.rows,bin_wr.rows)<<"rows doesn't match";
